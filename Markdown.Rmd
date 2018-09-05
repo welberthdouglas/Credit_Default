@@ -1,0 +1,136 @@
+---
+output:
+  pdf_document: default
+  html_document: default
+---
+# CREDIT DEFAULT ANALYSIS
+
+# Objective
+Create a reliable classifier in order to correctly predict default based on 400 observations of 7 variables:
+Age, 
+Years.at.Employer, 
+Years.at.Address, 
+Income, 
+Credit.Card.Debt, 
+Automobile.Debt, 
+Default
+
+
+# Importing data
+```{r}
+library(readxl)        #loading library for import data
+credit_default_data <- read_excel("C:/Data_Analysis_Projects/Credit_Default/credit_default_data.xlsx")
+attach(credit_default_data)
+```
+# Dataset characteristics
+```{r}
+summary(credit_default_data)
+head(credit_default_data)
+str(credit_default_data)
+plot(credit_default_data,col=credit_default_data$Default+1) 
+```
+Color = 0 is white, for that reason color +1 was used no major separations were observed in the plot
+
+
+
+
+# UNSUPERVISED
+
+# Cluster Analysis
+```{r}
+data.std = scale(credit_default_data[,2:7])
+hc = hclust(dist(data.std),method="complete")     
+```
+Using complete linkage (the distance between clusters is mesured taking the distance between the elements of each cluster that are farther away from each other)
+                         
+```{r}
+plot(hc, labels = Default)
+```
+A group in the far left seens to have a particularly low default rate
+```{r}
+groups.hc = cutree(hc,k=9) 
+```
+
+ The dendogram was cut in a way to isolate a group of potencial "good customers" in the dataset
+```{r}
+plot(hc,labels = groups.hc)
+data.std = data.frame(data.std,groups.hc,Default)  
+```
+ Updating the dataset with the group data from clustering
+```{r}
+sub = subset(data.std,subset = groups.hc==5)            # subset with group 5 only
+plot(sub,col=sub$Default+1)
+```
+
+```{r}
+summary(sub)
+```
+Comparing the group 5 with the rest of the observations we can see that it has: higher median ages, years at empoyer, years at addres and income. No surprises here, so those variables should play an important role in the classifier
+```{r}
+drate_sub = sum(sub$Default)/length(sub[,1])
+drate_tot = sum(credit_default_data$Default)/length(credit_default_data[,1]) 
+plot(data.std, col=groups.hc)
+```
+indeed group 5 has a lower default rate (10%) compared to 25% for the total dataset
+
+# Principal Components Analysis
+
+```{r}
+pca.out = prcomp(data.std[,1:6])
+biplot(pca.out, cex=0.7)   
+                                               
+```
+The pca analysis shows that the bigger variance of the data is explained by the contrast of the variables
+age, income and years at employer and the variables credit card debt and automobile debt, in consonance with the cluster analisys
+
+# SUPERVISED
+```{r}
+library(MASS)
+library(boot)                            #loading library for cross validation
+library(pROC)
+library(plyr)
+attach(data.std)
+```
+
+#A first aproach
+```{r}
+data.std=data.std[,-7]
+lda.fit = lda(Default~.,data=data.std) #Linear discriminant analysis
+plot(lda.fit)                                  #Visualizing the lda
+lda.pred = predict(lda.fit,data.std)             #making preditions for the training set
+lda.pred_df = (data.frame(lda.pred))                     #transforming the lda data in a dataset
+table(lda.pred$class,Default)                  #confusion matrix
+                                         # the confusion matrix shows that the model is not that good
+mean(lda.pred$class == Default)                 
+```
+The correct classification rate is 79,5% which doesn't seem to be badbut the naive classificator has a correct classification rate of 75% as shown by the prior probability
+```{r}
+roc.lda = roc(Default, lda.pred_df$posterior.1)  # creating the Response Operator Curve
+auc.lda = auc(roc.lda)                            
+plot.roc(roc.lda)
+auc.lda
+```
+the area under the curve is .8423  which is good for a test set, but this ROC curve was calculated using the training set...
+
+#Using cross validation (10 fold)
+```{r}
+set.seed(7)
+
+folds = split(data.std, cut(sample(1:nrow(data.std)),10))
+err = rep(0, length(folds))
+aucs = rep(0, length(folds))
+
+for (i in 1:length(folds)) {
+  test = ldply(folds[i], data.frame,.id=NULL)
+  train = ldply(folds[-i], data.frame,.id=NULL)
+  tmp.model = lda(Default~. , data=train)
+  tmp.predict = predict(tmp.model,test)
+  conf.mat = table(test$Default, tmp.predict$class)
+  err[i] = 1-sum(diag(conf.mat))/sum(conf.mat)
+  
+}
+
+mean(err)                                       
+```
+using cross validation it was found that the mean error of the classificator is 21.25% verry close to the value found in the first model
+
